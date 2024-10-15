@@ -309,6 +309,10 @@ class MainWindow(QMainWindow):
         self.remove_patients_comcash_button.clicked.connect(self.delete_patients_from_comcash)
         store_list_layout.addWidget(self.remove_patients_comcash_button)
 
+        self.add_deposits_to_comcash_button = QPushButton("Add Daily Deposits to Comcash")
+        self.add_deposits_to_comcash_button.clicked.connect(self.add_deposits_to_comcash)
+        store_list_layout.addWidget(self.add_deposits_to_comcash_button)
+
         self.store_list_button = QPushButton("Generate Today's Store List")
         self.store_list_button.clicked.connect(self.generate_store_list)
         store_list_layout.addWidget(self.store_list_button)
@@ -1357,6 +1361,16 @@ class MainWindow(QMainWindow):
         finally:
             if connection:
                 connection.close()
+
+    def add_deposits_to_comcash(self):
+        try:
+            self.result_box.append("Not done yet")
+        except FileNotFoundError:
+            self.result_box.setText("Deposit file not found.")
+        except pyodbc.Error as e:
+            self.result_box.setText(f"Database error: {e}")
+        except Exception as e:
+            self.result_box.setText(f"Unexpected error: {e}")
 
 # ------------------
 # Main Program Logic
