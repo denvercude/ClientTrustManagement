@@ -31,6 +31,7 @@ import shutil
 import json
 import requests
 import time
+from API import API_KEY, API_PIN, API_PASSWORD, API_URL
 
 # --------------
 # ALL FILE PATHS
@@ -70,14 +71,14 @@ connection_string = (
 
 class APIClient:
     def __init__(self, token_file="token_data.json"):
-        self.api_key = "qrZoTKxXBxqf4ZOQ"
-        self.pin = "1111"
-        self.password = "Gr!nd!23"
-        self.signin_url = "https://ssl-openapi-kickincafe.comcash.com/employee/auth/signin"
-        self.customer_list_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/list"
-        self.create_customer_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/create"
-        self.update_customer_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/update"
-        self.update_balance_url = "https://ssl-openapi-kickincafe.comcash.com//employee/customer/updatePoints"
+        self.api_key = API_KEY
+        self.pin = API_PIN
+        self.password = API_PASSWORD
+        self.signin_url = f"{API_URL}/employee/auth/signin"
+        self.customer_list_url = f"{API_URL}/employee/customer/list"
+        self.create_customer_url = f"{API_URL}/employee/customer/create"
+        self.update_customer_url = f"{API_URL}/employee/customer/update"
+        self.update_balance_url = f"{API_URL}/employee/customer/updatePoints"
         self.token_file = token_file
         self.token = None
         self.token_expiration = None
@@ -1267,7 +1268,7 @@ class MainWindow(QMainWindow):
             # Clear previous results
             self.result_box.clear()
 
-            for row in rows[:2]:
+            for row in rows:
                 first_name = row.FirstName
                 last_name = row.LastName
 
