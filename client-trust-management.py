@@ -28,40 +28,237 @@ from datetime import datetime, timedelta
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment
 import shutil
+import json
+import requests
+import time
 
 # --------------
 # ALL FILE PATHS
 # --------------
 
-# Access Database:
-database_path = r'I:\Client Trust\Client Trust.accdb'
+# Function to load the configuration file
+def load_config(config_file):
+    with open(config_file, 'r') as file:
+        return json.load(file)
 
-# Automated-Deposits Excel sheet:
-auto_deposits_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\2024 Deposits\Automated-Deposits-Sheet.xlsx'
+config = load_config('config_work.json') # Used at work
+#config = load_config('config_home.json') # Used at home
 
-# Automated-Withdrawals Excel sheet:
-auto_withdrawals_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\2024 Withdrawals\Automated-Withdrawals-Sheet.xlsx'
+# Retrieve the base directories from the configuration file
+excel_base_dir = config.get('excel_base_dir')
+access_base_dir = config.get('access_base_dir')
 
-# Automated-InsOuts Excel sheet:
-auto_ins_outs_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\Ins N Outs\Automated-InsOuts.xlsx'
-
-# Store List Folder:
-store_list_folder_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\Store List 2024'
-
-# Store List Linked To Access Excel sheet:
-linked_to_access_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\Store List 2024\Store List Linked To Access.xlsx'
-
-# Deposits Folder path:
-deposits_folder_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\2024 Deposits'
-
-# Withdrawals Folder path:
-withdrawals_folder_path = r'C:\Users\Dcude\OneDrive - Principles Inc\Desktop\2024 Withdrawals'
+# Construct the file paths dynamically using the base directories
+database_path = os.path.join(access_base_dir, 'Client Trust.accdb')
+auto_deposits_path = os.path.join(excel_base_dir, '2024 Deposits', 'Automated-Deposits-Sheet.xlsx')
+auto_withdrawals_path = os.path.join(excel_base_dir, '2024 Withdrawals', 'Automated-Withdrawals-Sheet.xlsx')
+auto_ins_outs_path = os.path.join(excel_base_dir, 'Ins N Outs', 'Automated-InsOuts.xlsx')
+store_list_folder_path = os.path.join(excel_base_dir, 'Store List 2024')
+linked_to_access_path = os.path.join(excel_base_dir, 'Store List 2024', 'Store List Linked To Access.xlsx')
+deposits_folder_path = os.path.join(excel_base_dir, '2024 Deposits')
+withdrawals_folder_path = os.path.join(excel_base_dir, '2024 Withdrawals')
 
 # Database Connection String
 connection_string = (
         r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
         r'DBQ=' + database_path + ';'
 )
+
+# ----------------
+# API Client CLass
+# ----------------
+
+class APIClient:
+    def __init__(self, token_file="token_data.json"):
+        self.api_key = "qrZoTKxXBxqf4ZOQ"
+        self.pin = "1111"
+        self.password = "Gr!nd!23"
+        self.signin_url = "https://ssl-openapi-kickincafe.comcash.com/employee/auth/signin"
+        self.customer_list_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/list"
+        self.create_customer_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/create"
+        self.update_customer_url = "https://ssl-openapi-kickincafe.comcash.com/employee/customer/update"
+        self.update_balance_url = "https://ssl-openapi-kickincafe.comcash.com//employee/customer/updatePoints"
+        self.token_file = token_file
+        self.token = None
+        self.token_expiration = None
+        self.load_token_from_file()
+
+    def load_token_from_file(self):
+        # Load token and expiration from a file if it exists
+        if os.path.exists(self.token_file):
+            with open(self.token_file, 'r') as file:
+                data = json.load(file)
+                self.token = data.get("token")
+                self.token_expiration = data.get("token_expiration")
+                print("Loaded token from file.")
+        else:
+            print("No token file found. Need to authenticate.")
+
+    def save_token_to_file(self):
+        # Save token and expiration to a file
+        data = {
+            "token": self.token,
+            "token_expiration": self.token_expiration
+        }
+        with open(self.token_file, 'w') as file:
+            json.dump(data, file)
+        print("Token saved to file.")
+
+    def authenticate(self):
+        # Request a new bearer token
+        payload = json.dumps({
+            "openApiKey": self.api_key,
+            "pin": self.pin,
+            "password": self.password
+        })
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(self.signin_url, headers=headers, data=payload)
+
+        if response.status_code == 200:
+            data = response.json()
+            self.token = data.get("accessToken")
+            expires_in = data.get("expiresIn")
+            self.token_expiration = time.time() + expires_in  # Track token expiration in seconds
+            self.save_token_to_file()  # Save token to file after successful authentication
+            print("Authenticated successfully. Token received.")
+        else:
+            print(f"Failed to authenticate. Status Code: {response.status_code}")
+
+    def is_token_valid(self):
+        # Check if token exists and hasn't expired
+        if self.token and float(self.token_expiration) > time.time():
+            return True
+        return False
+
+    def get_customer_list(self, status, customer_type):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "order": "asc",
+                "type": customer_type,
+                "status": status
+            })
+
+            response = requests.post(self.customer_list_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"Failed to fetch customer list. Status Code: {response.status_code}")
+                return None
+
+    def create_new_customer(self, first_name, last_name):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "countryPhoneCode": 1,
+                "phone": 0000000000,
+                "firstName": first_name,
+                "lastName": last_name,
+                "locationId": 1
+            })
+
+            response = requests.post(self.create_customer_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                print("Customer created successfully.")
+                return response.json()
+            else:
+                print(f"Failed to create customer. Status Code: {response.status_code}")
+                return None
+
+    def update_customer_type(self, customer_id):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "id": customer_id,
+                "typeId": "4"
+            })
+
+            response = requests.post(self.update_customer_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                print("Customer type updated successfully.")
+                return response.json()
+            else:
+                print(f"Failed to update customer type. Status Code: {response.status_code}")
+                return None
+
+    def update_customer_balance(self, customer_id, balance):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "customerId": customer_id,
+                "storeCredit": float(balance)
+            })
+
+            response = requests.post(self.update_balance_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                print("Balance updated successfully.")
+                return response.json()
+            else:
+                print(f"Failed to update balance. Status Code: {response.status_code}")
+                return None
+
+    def delete_customer(self, customer_id):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "customerId": customer_id
+            })
+
+            response = requests.post(self.update_balance_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                print("Customer successfully deleted.")
+                return response.json()
+            else:
+                print(f"Failed to delete customer. Status Code: {response.status_code}")
+                return None
 
 # -----------------
 # Main Window Class
@@ -102,13 +299,13 @@ class MainWindow(QMainWindow):
         store_list_group.setAlignment(Qt.AlignCenter)
         store_list_layout = QVBoxLayout()
 
+        self.add_new_patient_button = QPushButton("Add New/Dephased Patients to Comcash")
+        self.add_new_patient_button.clicked.connect(self.new_patients_to_comcash)
+        store_list_layout.addWidget(self.add_new_patient_button)
+
         self.store_list_button = QPushButton("Generate Today's Store List")
         self.store_list_button.clicked.connect(self.generate_store_list)
         store_list_layout.addWidget(self.store_list_button)
-
-        self.daily_store_deposits_button = QPushButton("Add Daily Deposits to Store List")
-        self.daily_store_deposits_button.clicked.connect(self.deposits_to_store)
-        store_list_layout.addWidget(self.daily_store_deposits_button)
 
         self.replenish_books_thurs_button = QPushButton("Store Balances to $100")
         self.replenish_books_thurs_button.clicked.connect(self.replenish_store_balances_thurs)
@@ -836,7 +1033,7 @@ class MainWindow(QMainWindow):
                 linked_balance = row[6]
 
                 # Only proceed if both last name and first name are not None
-                if linked_last_name and linked_first_name:
+                if linked_last_name is not None and linked_first_name is not None:
                     # Compare full name from linked list with client names
                     if (linked_last_name.lower(), linked_first_name.lower()) not in client_names:
                         # Add unmatched name to the "Left" list
@@ -1039,6 +1236,75 @@ class MainWindow(QMainWindow):
             self.result_box.setText(f"Database error: {e}")
         except Exception as e:
             self.result_box.setText(f"Unexpected error: {e}")
+
+    def new_patients_to_comcash(self):
+        # Default connection
+        connection = None
+
+        try:
+            # Establish the connection to Access Database
+            connection = pyodbc.connect(connection_string)
+
+            # Create a cursor object using the Access connection
+            cursor = connection.cursor()
+
+            # Query all phase 1 patients
+            query = '''
+                    SELECT FirstName, LastName, Phase
+                    FROM Balance
+                    WHERE Phase = '1';
+            '''
+            cursor.execute(query)
+
+            rows = cursor.fetchall()
+
+            # Establish connection to Comcash API
+            api_client = APIClient()
+
+            deleted_customer_list = api_client.get_customer_list(2, 4)
+            active_customer_list = api_client.get_customer_list(1,4)
+
+            # Clear previous results
+            self.result_box.clear()
+
+            for row in rows[:2]:
+                first_name = row.FirstName
+                last_name = row.LastName
+
+                # Check if the customer exists in the deleted_customer_list
+                customer_in_deleted_list = False
+
+                # Check if the customer exists in the deleted_customer_list
+                for deleted_customer in deleted_customer_list:
+                    if deleted_customer['firstName'] == first_name and deleted_customer['lastName'] == last_name:
+                        customer_in_deleted_list = True
+                        break
+
+                if not customer_in_deleted_list:
+                    customer_in_active_list = False
+                    for active_customer in active_customer_list:
+                        if active_customer['firstName'] == first_name and active_customer['lastName'] == last_name:
+                            customer_in_active_list = True
+                            break
+
+                            # Print appropriate messages based on customer presence
+                    if customer_in_active_list:
+                        self.result_box.append(f"Customer {first_name} {last_name} is already in the active customer list.")
+                    else:
+                        self.result_box.append(f"Creating a new customer: {first_name} {last_name}")
+                else:
+                    self.result_box.append(f"Customer {first_name} {last_name} is in the deleted customer list. "
+                                           f"You must manually change their status to active.")
+
+        except FileNotFoundError:
+            self.result_box.setText("Withdrawal Excel file not found.")
+        except pyodbc.Error as e:
+            self.result_box.setText(f"Error: {e}")
+        except Exception as e:
+            self.result_box.setText(f"Unexpected error: {e}")
+        finally:
+            if connection:
+                connection.close()
 
 # ------------------
 # Main Program Logic
