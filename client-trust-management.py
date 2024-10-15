@@ -79,6 +79,7 @@ class APIClient:
         self.create_customer_url = f"{API_URL}/employee/customer/create"
         self.update_customer_url = f"{API_URL}/employee/customer/update"
         self.update_balance_url = f"{API_URL}/employee/customer/updatePoints"
+        self.delete_customer_url = f"{API_URL}/employee/customer/delete"
         self.token_file = token_file
         self.token = None
         self.token_expiration = None
@@ -252,7 +253,7 @@ class APIClient:
                 "customerId": customer_id
             })
 
-            response = requests.post(self.update_balance_url, headers=headers, data=payload)
+            response = requests.post(self.delete_customer_url, headers=headers, data=payload)
 
             if response.status_code == 200:
                 print("Customer successfully deleted.")
@@ -300,9 +301,13 @@ class MainWindow(QMainWindow):
         store_list_group.setAlignment(Qt.AlignCenter)
         store_list_layout = QVBoxLayout()
 
-        self.add_new_patient_button = QPushButton("Add New/Dephased Patients to Comcash")
-        self.add_new_patient_button.clicked.connect(self.new_patients_to_comcash)
-        store_list_layout.addWidget(self.add_new_patient_button)
+        self.add_new_patients_button = QPushButton("Add New/Dephased Patients to Comcash")
+        self.add_new_patients_button.clicked.connect(self.new_patients_to_comcash)
+        store_list_layout.addWidget(self.add_new_patients_button)
+
+        self.remove_patients_comcash_button = QPushButton("Delete Discharged/2nd Phase Patients from Comcash")
+        self.remove_patients_comcash_button.clicked.connect(self.delete_patients_from_comcash)
+        store_list_layout.addWidget(self.remove_patients_comcash_button)
 
         self.store_list_button = QPushButton("Generate Today's Store List")
         self.store_list_button.clicked.connect(self.generate_store_list)
@@ -1293,12 +1298,58 @@ class MainWindow(QMainWindow):
                         self.result_box.append(f"Customer {first_name} {last_name} is already in the active customer list.")
                     else:
                         self.result_box.append(f"Creating a new customer: {first_name} {last_name}")
+                        new_customer = api_client.create_new_customer(first_name, last_name)
+                        api_client.update_customer_type(new_customer.get("id"))
                 else:
                     self.result_box.append(f"Customer {first_name} {last_name} is in the deleted customer list. "
                                            f"You must manually change their status to active.")
 
-        except FileNotFoundError:
-            self.result_box.setText("Withdrawal Excel file not found.")
+        except pyodbc.Error as e:
+            self.result_box.setText(f"Error: {e}")
+        except Exception as e:
+            self.result_box.setText(f"Unexpected error: {e}")
+        finally:
+            if connection:
+                connection.close()
+
+    def delete_patients_from_comcash(self):
+        # Default connection
+        connection = None
+
+        try:
+            # Establish the connection to Access Database
+            connection = pyodbc.connect(connection_string)
+
+            # Create a cursor object using the Access connection
+            cursor = connection.cursor()
+
+            # Query all phase 1 patients
+            query = '''
+                    SELECT FirstName, LastName, Phase
+                    FROM Balance
+                    WHERE Phase IN ('2', '3', '4');
+            '''
+            cursor.execute(query)
+
+            rows = cursor.fetchall()
+
+            # Establish connection to Comcash API
+            api_client = APIClient()
+
+            active_customer_list = api_client.get_customer_list(1,4)
+
+            # Clear previous results
+            self.result_box.clear()
+
+            for row in rows:
+                first_name = row.FirstName
+                last_name = row.LastName
+
+                for active_customer in active_customer_list:
+                    if active_customer['firstName'] == first_name and active_customer['lastName'] == last_name:
+                        api_client.delete_customer(int(active_customer.get("id")))
+                        self.result_box.append(f"{first_name} {last_name}'s account removed from Comcash.")
+
         except pyodbc.Error as e:
             self.result_box.setText(f"Error: {e}")
         except Exception as e:
