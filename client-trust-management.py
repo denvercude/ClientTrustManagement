@@ -1092,7 +1092,6 @@ class MainWindow(QMainWindow):
 
                 for deleted_customer in deleted_customer_list:
                     if deleted_customer['firstName'] == first_name and deleted_customer['lastName'] == last_name:
-                        api_client.update_customer_name(deleted_customer.get("id"))
                         customer_in_deleted_list = True
                         break
 
@@ -1239,7 +1238,7 @@ class APIClient:
             self.token = data.get("accessToken")
             expires_in = data.get("expiresIn")
             print(f"Expires in: {expires_in}")
-            self.token_expiration = time.time() + expires_in  # Track token expiration in seconds
+            self.token_expiration = expires_in  # Track token expiration in seconds
             self.save_token_to_file()  # Save token to file after successful authentication
             print("Authenticated successfully. Token received.")
         else:
