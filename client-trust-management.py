@@ -1152,10 +1152,12 @@ class MainWindow(QMainWindow):
             # Clear previous results
             self.result_box.clear()
 
+            # For every row in the database query
             for row in rows:
                 first_name = row.FirstName
                 last_name = row.LastName
 
+                # For every active customer in the list, if there is name match, delete the customer
                 for active_customer in active_customer_list:
                     if active_customer['firstName'] == first_name and active_customer['lastName'] == last_name:
                         api_client.delete_customer(int(active_customer.get("id")))
@@ -1171,7 +1173,44 @@ class MainWindow(QMainWindow):
 
     def add_deposits_to_comcash(self):
         try:
-            self.result_box.append("Not done yet")
+            # Get the list of Impact Patient customers
+            api_client = APIClient()
+            active_customer_list = api_client.get_customer_list(1, 4)
+
+
+            # Check if it's Thursday
+            today = datetime.today().weekday()
+            if today == 3:  # If it is Thursday:
+
+                # Establish the connection to Access Database
+                connection = pyodbc.connect(connection_string)
+
+                # Create a cursor object using the Access connection
+                cursor = connection.cursor()
+
+                # Query all phase 1 patients
+                query = '''
+                                    SELECT FirstName, LastName, Phase, [Sum of DepositAmount], [Sum of WithdrawalAmount]
+                                    FROM Balance
+                                    WHERE Phase = '1';
+                            '''
+                cursor.execute(query)
+
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    first_name = row.FirstName
+                    last_name = row.LastName
+                    trust_account_bal = row[3] - row[4]
+                    current_balance = None
+
+
+                    for active_customer in active_customer_list:
+                        if active_customer["firstName"] == first_name and active_customer['lastName'] == last_name:
+                            current_balance = active_customer.get('storeCredit')
+            else:
+                self.result_box.append("It's not Thursday")
+
         except FileNotFoundError:
             self.result_box.setText("Deposit file not found.")
         except pyodbc.Error as e:
