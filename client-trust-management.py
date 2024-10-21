@@ -1175,13 +1175,31 @@ class MainWindow(QMainWindow):
         try:
             # Get the list of Impact Patient customers
             api_client = APIClient()
-            active_customer_list = api_client.get_customer_list(1, 4)
+            active_customer_list = api_client.get_customer_list(1, 1)
 
+            last_wednesday = datetime.now() - timedelta(days=5)
+            time_from = datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 0, 0, 0)
+            time_to = datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 23, 59, 59)
 
+            time_from = int(time.mktime(time_from.timetuple()))
+            time_to = int(time.mktime(time_to.timetuple()))
+
+            for active_customer in active_customer_list:
+                sales = api_client.get_customer_sales(active_customer.get("id"), time_from, time_to)
+                first_name = active_customer['firstName']
+                last_name = active_customer['lastName']
+                if sales:  # Ensure there is data in sales
+                    for sale in sales:  # If sales is a list, iterate over each sale
+                        total_daily_sales = sale['payment']['totalPayedAmount']
+                        self.result_box.append(f"{first_name} {last_name} - Sales: {total_daily_sales}")
+                else:
+                    self.result_box.append(f"{first_name} {last_name} - No sales found")
+
+            """
             # Check if it's Thursday
             today = datetime.today().weekday()
-            if today == 3:  # If it is Thursday:
-
+            if today == 0:  # If it is Thursday:
+                
                 # Establish the connection to Access Database
                 connection = pyodbc.connect(connection_string)
 
@@ -1208,8 +1226,12 @@ class MainWindow(QMainWindow):
                     for active_customer in active_customer_list:
                         if active_customer["firstName"] == first_name and active_customer['lastName'] == last_name:
                             current_balance = active_customer.get('storeCredit')
+                            self.result_box.append(F"{first_name} {last_name} - CT Balance : {trust_account_bal}, "
+                                                   F"Store Credit: {current_balance}")
+                                                   
             else:
                 self.result_box.append("It's not Thursday")
+            """
 
         except FileNotFoundError:
             self.result_box.setText("Deposit file not found.")
@@ -1232,6 +1254,7 @@ class APIClient:
         self.update_customer_url = f"{API_URL}/employee/customer/update"
         self.update_balance_url = f"{API_URL}/employee/customer/updatePoints"
         self.delete_customer_url = f"{API_URL}/employee/customer/delete"
+        self.get_sales_url = f"{API_URL}/employee/customer/sales"
         self.token_file = token_file
         self.token = None
         self.token_expiration = None
@@ -1441,6 +1464,32 @@ class APIClient:
                 return response.json()
             else:
                 print(f"Failed to update customer name. Status Code: {response.status_code}")
+                return None
+
+    def get_customer_sales(self, customer_id, time_from, time_to):
+        if not self.is_token_valid():
+            print("Token expired or invalid. Authenticating...")
+            self.authenticate()
+
+        if self.token:
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {self.token}'
+            }
+
+            payload = json.dumps({
+                "customerId": customer_id,
+                "timeFrom": time_from,
+                "timeTo": time_to
+            })
+
+            response = requests.post(self.get_sales_url, headers=headers, data=payload)
+
+            if response.status_code == 200:
+                print("Retrieved sales successfully.")
+                return response.json()
+            else:
+                print(f"Failed to retrieve sales. Status Code: {response.status_code}")
                 return None
 
 # ------------------
