@@ -26,7 +26,8 @@ import pandas as pd
 import xlwings as xw
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
 import shutil
 import json
 import requests
@@ -58,6 +59,7 @@ store_list_folder_path = os.path.join(excel_base_dir, 'Store List 2024')
 linked_to_access_path = os.path.join(excel_base_dir, 'Store List 2024', 'Store List Linked To Access.xlsx')
 deposits_folder_path = os.path.join(excel_base_dir, '2024 Deposits')
 withdrawals_folder_path = os.path.join(excel_base_dir, '2024 Withdrawals')
+new_store_folder_path = os.path.join(excel_base_dir,'New Store List')
 
 # Database Connection String
 connection_string = (
@@ -123,6 +125,10 @@ class MainWindow(QMainWindow):
         self.replenish_books_thurs_button = QPushButton("Store Balances to $100")
         self.replenish_books_thurs_button.clicked.connect(self.replenish_store_balances_thurs)
         store_list_layout.addWidget(self.replenish_books_thurs_button)
+
+        self.new_store_list_button = QPushButton("Generate New Store List")
+        self.new_store_list_button.clicked.connect(self.generate_new_store_list)
+        store_list_layout.addWidget(self.new_store_list_button)
 
         store_list_group.setLayout(store_list_layout)
         button_layout.addWidget(store_list_group)
@@ -1170,6 +1176,157 @@ class MainWindow(QMainWindow):
         finally:
             if connection:
                 connection.close()
+
+    def generate_new_store_list(self):
+        try:
+            # Create a connection to the Comcash API
+            api_client = APIClient()
+
+            # Get the customer list
+            customers = api_client.get_customer_list(1, 4)
+
+            # Create a connection to the Access database
+            connection = pyodbc.connect(connection_string)
+            cursor = connection.cursor()
+
+            # Query to fetch clients with Phase = 1
+            cursor.execute("SELECT LastName, FirstName FROM Clients WHERE Phase = '1' "
+                           "ORDER BY LastName ASC, FirstName ASC")
+
+            # Fetch all results
+            clients = cursor.fetchall()
+
+            # Set the folder path to save the new Store List workbook
+            folder_path = new_store_folder_path
+
+            # Get today's date and format it as MM-DD-YY
+            today = datetime.today().strftime('%m-%d-%y')
+
+            # Get yesterday's date and format it as MM-DD-YY for the previous store list
+            yesterday = (datetime.today() - timedelta(days=1)).strftime('%m-%d-%y')
+
+            # Create the file name with today's date
+            file_name = f'Store List_{today}.xlsx'
+            previous_file_name = f'Store List_{yesterday}.xlsx'
+
+            # Full path to save the workbook and previous file path
+            file_path = os.path.join(folder_path, file_name)
+            previous_file_path = os.path.join(folder_path, previous_file_name)
+
+            # Check if the previous store list exists
+            previous_data = {}
+            if os.path.exists(previous_file_path):
+                # Load the previous store list
+                previous_wb = openpyxl.load_workbook(previous_file_path)
+                previous_ws = previous_wb.active
+
+                # Read previous sheet and store final balance data in a dictionary
+                for row in previous_ws.iter_rows(min_row=4, max_row=previous_ws.max_row, min_col=1, max_col=7,
+                                                 values_only=True):
+                    prev_last_name, prev_first_name, _, _, _, _, final_balance = row
+                    previous_data[(prev_last_name, prev_first_name)] = final_balance
+
+            if os.path.exists(file_path):
+                print(f"File '{file_name}' already exists. No new file created.")
+            else:
+                # Create a new blank Store List and select the active sheet
+                sl = openpyxl.Workbook()
+                ws = sl.active
+
+                # Create Title Header with today's date
+                bold_side = Side(border_style="thick", color="000000")
+                ws.merge_cells('A1:B1')
+                ws['A1'] = "Store List"
+                ws['A1'].font = Font(bold=True, size=14)
+                ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+                ws['A1'].fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+                ws['A1'].border = Border(left=bold_side, top=bold_side, bottom=bold_side)
+                ws['B1'].border = Border(top=bold_side, bottom=bold_side)
+                ws['C1'] = f"{today}"
+                ws['C1'].font = Font(bold=True, size=14)
+                ws['C1'].alignment = Alignment(horizontal='center', vertical='center')
+                ws['C1'].fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+                ws['C1'].border = Border(right=bold_side, top=bold_side, bottom=bold_side)
+                ws.column_dimensions['C'].width = 12
+
+                # Create Table Headers
+                ws['A3'] = "Last Name"
+                ws['B3'] = "First Name"
+                ws['C3'] = "Starting Balance"
+                ws['D3'] = "Store Transactions"
+                ws['E3'] = "Total Spent at Store"
+                ws['F3'] = "Quarter Transactions"
+                ws['G3'] = "Added to Store Balance"
+                ws['H3'] = "Final Balance"
+
+                row_num = 4  # Start at row 4
+                for client in clients:
+                    last_name = client.LastName
+                    first_name = client.FirstName
+
+                    # Insert Last Name in column A and First Name in column B
+                    ws[f'A{row_num}'] = last_name
+                    ws[f'B{row_num}'] = first_name
+
+                    # Check if the client existed in the previous day's store list
+                    final_balance = previous_data.get((last_name, first_name), 0)  # Default to 0 if no match found
+
+                    # Set the final balance in the new list (Column C)
+                    ws[f'C{row_num}'] = final_balance
+
+                    # Get customer ID (you will need to adapt this to match your data model)
+                    customer = next(
+                        (c for c in customers if c.get('lastName') == last_name and c.get('firstName') == first_name),
+                        None)
+
+                    if customer:
+                        customer_id = customer['id']
+
+                        # Get sales for the customer
+                        last_wednesday = datetime.now() - timedelta(days=6)
+                        time_from = int(time.mktime(
+                            datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 0, 0,
+                                     0).timetuple()))
+                        time_to = int(time.mktime(
+                            datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 23, 59,
+                                     59).timetuple()))
+
+                        sales = api_client.get_customer_sales(customer_id, time_from, time_to)
+
+                        # Initialize an empty list to store product details
+                        product_list = []
+
+                        # Check if sales data exists
+                        if not sales:
+                            product_string = "No sales found"  # Set a default message if no sales are found
+                        else:
+                            # Process sales data (if any)
+                            for sale in sales:
+                                for product in sale['products']:
+                                    product_title = product['title']
+                                    product_price = product['price']
+                                    # Add product details to the list
+                                    product_list.append(f"{product_title} - ${product_price:.2f}")
+
+                            # Join the list into a formatted string
+                            product_string = '\n'.join(product_list)
+
+                        # Set the product details string in column D
+                        ws[f'D{row_num}'] = product_string
+
+                    # Move to the next row
+                    row_num += 1
+
+                # Save the new workbook
+                sl.save(file_path)
+                print(f"New Store List '{file_name}' created successfully.")
+
+        except FileNotFoundError:
+            self.result_box.setText("Deposit file not found.")
+        except pyodbc.Error as e:
+            self.result_box.setText(f"Database error: {e}")
+        except Exception as e:
+            self.result_box.setText(f"Unexpected error: {e}")
 
     def add_deposits_to_comcash(self):
         try:
