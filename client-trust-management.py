@@ -1296,6 +1296,9 @@ class MainWindow(QMainWindow):
                         # Initialize an empty list to store product details
                         product_list = []
 
+                        # Initialize total payment
+                        total_payment = 0.00
+
                         # Check if sales data exists
                         if not sales:
                             product_string = "No sales found"  # Set a default message if no sales are found
@@ -1308,14 +1311,34 @@ class MainWindow(QMainWindow):
                                     # Add product details to the list
                                     product_list.append(f"{product_title} - ${product_price:.2f}")
 
+                                # Directly access the payment dictionary
+                                payment = sale.get('payment')
+                                if isinstance(payment, dict) and 'totalPayedAmount' in payment:
+                                    total_payment += float(payment['totalPayedAmount'])
+                                else:
+                                    self.result_box.append(f"Unexpected payment format or missing 'totalPayedAmount': {payment}")
+
                             # Join the list into a formatted string
                             product_string = '\n'.join(product_list)
 
-                        # Set the product details string in column D
+                        # Set the product details string in column D and total sales in column E
                         ws[f'D{row_num}'] = product_string
+                        ws[f'E{row_num}'] = total_payment
 
                     # Move to the next row
                     row_num += 1
+
+                # Determine the range of the table (from row 3 to the last row, columns A-H)
+                table_range = f'A3:H{row_num - 1}'  # `row_num - 1` to account for the last row of data
+
+                # Create a table and apply style
+                table = Table(displayName="StoreListTable", ref=table_range)
+                style = TableStyleInfo(name="TableStyleLight8", showFirstColumn=False, showLastColumn=False,
+                                       showRowStripes=True, showColumnStripes=False)
+                table.tableStyleInfo = style
+
+                # Add the table to the worksheet
+                ws.add_table(table)
 
                 # Save the new workbook
                 sl.save(file_path)
