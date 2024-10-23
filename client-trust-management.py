@@ -60,6 +60,7 @@ linked_to_access_path = os.path.join(excel_base_dir, 'Store List 2024', 'Store L
 deposits_folder_path = os.path.join(excel_base_dir, '2024 Deposits')
 withdrawals_folder_path = os.path.join(excel_base_dir, '2024 Withdrawals')
 new_store_folder_path = os.path.join(excel_base_dir,'New Store List')
+quarters_folder_path = os.path.join(excel_base_dir, 'Quarters')
 
 # Database Connection String
 connection_string = (
@@ -1197,7 +1198,8 @@ class MainWindow(QMainWindow):
             clients = cursor.fetchall()
 
             # Set the folder path to save the new Store List workbook
-            folder_path = new_store_folder_path
+            store_folder_path = new_store_folder_path
+            quarters_path = quarters_folder_path
 
             # Get today's date and format it as MM-DD-YY
             today = datetime.today().strftime('%m-%d-%y')
@@ -1205,13 +1207,15 @@ class MainWindow(QMainWindow):
             # Get yesterday's date and format it as MM-DD-YY for the previous store list
             yesterday = (datetime.today() - timedelta(days=1)).strftime('%m-%d-%y')
 
-            # Create the file name with today's date
-            file_name = f'Store List_{today}.xlsx'
+            # Create the file names with today's date
+            store_file_name = f'Store List_{today}.xlsx'
             previous_file_name = f'Store List_{yesterday}.xlsx'
+            quarters_file_name = f'Quarters_{today}.xlsx'
 
             # Full path to save the workbook and previous file path
-            file_path = os.path.join(folder_path, file_name)
-            previous_file_path = os.path.join(folder_path, previous_file_name)
+            store_file_path = os.path.join(store_folder_path, store_file_name)
+            previous_file_path = os.path.join(store_folder_path, previous_file_name)
+            quarters_file_path = os.path.join(quarters_path, quarters_file_name)
 
             # Check if the previous store list exists
             previous_data = {}
@@ -1226,8 +1230,8 @@ class MainWindow(QMainWindow):
                     prev_last_name, prev_first_name, _, _, _, _, final_balance = row
                     previous_data[(prev_last_name, prev_first_name)] = final_balance
 
-            if os.path.exists(file_path):
-                print(f"File '{file_name}' already exists. No new file created.")
+            if os.path.exists(store_file_path):
+                print(f"File '{store_file_name}' already exists. No new file created.")
             else:
                 # Create a new blank Store List and select the active sheet
                 sl = openpyxl.Workbook()
@@ -1316,7 +1320,8 @@ class MainWindow(QMainWindow):
                                 if isinstance(payment, dict) and 'totalPayedAmount' in payment:
                                     total_payment += float(payment['totalPayedAmount'])
                                 else:
-                                    self.result_box.append(f"Unexpected payment format or missing 'totalPayedAmount': {payment}")
+                                    self.result_box.append(
+                                        f"Unexpected payment format or missing 'totalPayedAmount': {payment}")
 
                             # Join the list into a formatted string
                             product_string = '\n'.join(product_list)
@@ -1327,6 +1332,40 @@ class MainWindow(QMainWindow):
 
                     # Move to the next row
                     row_num += 1
+
+                # Quarters sheet processing
+                if os.path.exists(quarters_file_path):
+                    quarters_wb = openpyxl.load_workbook(quarters_file_path)
+                    quarters_ws = quarters_wb.active
+
+                    # Iterate over the quarters sheet starting at row 2
+                    for quarter_row in quarters_ws.iter_rows(min_row=2, max_row=quarters_ws.max_row, min_col=1,
+                                                             max_col=3, values_only=True):
+                        q_last_name, q_first_name, q_amount = quarter_row
+
+                        # Track if the name was found in the store list
+                        found_in_store_list = False
+
+                        # Search for matching name in the store list (ws)
+                        for store_row in ws.iter_rows(min_row=4, max_row=ws.max_row, min_col=1, max_col=2,
+                                                      values_only=False):
+                            store_last_name_cell, store_first_name_cell = store_row
+                            store_last_name = store_last_name_cell.value
+                            store_first_name = store_first_name_cell.value
+
+                            # If a match is found
+                            if store_last_name == q_last_name and store_first_name == q_first_name:
+                                found_in_store_list = True  # Mark as found
+
+                                # Add the quarters amount (column C in quarters) to column F in store list
+                                ws[f'F{store_last_name_cell.row}'] = q_amount
+                                break
+
+                        # If the name wasn't found, append to result box
+                        if not found_in_store_list:
+                            message = (f"{q_first_name} {q_last_name} has a ${q_amount} transaction on quarters sheet, "
+                                       f"but the patient isn't on the store list")
+                            self.result_box.append(message)
 
                 # Determine the range of the table (from row 3 to the last row, columns A-H)
                 table_range = f'A3:H{row_num - 1}'  # `row_num - 1` to account for the last row of data
@@ -1341,8 +1380,8 @@ class MainWindow(QMainWindow):
                 ws.add_table(table)
 
                 # Save the new workbook
-                sl.save(file_path)
-                print(f"New Store List '{file_name}' created successfully.")
+                sl.save(store_file_path)
+                print(f"New Store List '{store_file_name}' created successfully.")
 
         except FileNotFoundError:
             self.result_box.setText("Deposit file not found.")
