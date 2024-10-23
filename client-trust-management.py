@@ -42,8 +42,8 @@ def load_config(config_file):
     with open(config_file, 'r') as file:
         return json.load(file)
 
-config = load_config('config_work.json') # Used at work
-#config = load_config('config_home.json') # Used at home
+#config = load_config('config_work.json') # Used at work
+config = load_config('config_home.json') # Used at home
 
 # Retrieve the base directories from the configuration file
 excel_base_dir = config.get('excel_base_dir')
