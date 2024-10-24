@@ -43,8 +43,8 @@ def load_config(config_file):
     with open(config_file, 'r') as file:
         return json.load(file)
 
-#config = load_config('config_work.json') # Used at work
-config = load_config('config_home.json') # Used at home
+config = load_config('config_work.json') # Used at work
+#config = load_config('config_home.json') # Used at home
 
 # Retrieve the base directories from the configuration file
 excel_base_dir = config.get('excel_base_dir')
@@ -127,9 +127,13 @@ class MainWindow(QMainWindow):
         self.new_store_list_button.clicked.connect(self.generate_new_store_list)
         store_list_layout.addWidget(self.new_store_list_button)
 
-        self.add_deposits_to_store_button = QPushButton("Add to Deposits to New Store List")
-        self.add_deposits_to_store_button.clicked.connect(self.add_deposits_to_store_list)
+        self.add_deposits_to_store_button = QPushButton("Add Daily Deposits to New Store List")
+        self.add_deposits_to_store_button.clicked.connect(self.add_daily_deposits_to_store_list)
         store_list_layout.addWidget(self.add_deposits_to_store_button)
+
+        self.replenish_balances_store_button = QPushButton("Replenish Store Balances to $100")
+        self.replenish_balances_store_button.clicked.connect(self.replenish_new_store_balances)
+        store_list_layout.addWidget(self.replenish_balances_store_button)
 
         store_list_group.setLayout(store_list_layout)
         button_layout.addWidget(store_list_group)
@@ -1400,7 +1404,112 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.result_box.setText(f"Unexpected error: {e}")
 
-    def add_deposits_to_store_list(self):
+    def add_daily_deposits_to_store_list(self):
+        try:
+            # Read the Auto-Deposits Excel file using pandas
+            df_deposits = pd.read_excel(auto_deposits_path)
+
+            # Group deposits by 'FirstName' and 'LastName' and sum the 'Amount'
+            df_grouped_deposits = df_deposits.groupby(['FirstName', 'LastName'], as_index=False)['Amount'].sum()
+
+            # Determine today's date in the required format for the store list filename
+            today = datetime.today().strftime('%m-%d-%y')
+            store_list_file = os.path.join(new_store_folder_path, f'Store List_{today}.xlsx')
+
+            # Open the store list excel file using xlwings
+            app = xw.App(visible=False)  # Launch Excel in the background
+            wb = app.books.open(store_list_file)
+            sheet = wb.sheets[0]  # Assuming the relevant sheet is the first one
+
+            # Function to calculate the previous Thursday
+            def get_previous_thursday(start_date):
+                offset = (start_date.weekday() - 3) % 7
+                return start_date - timedelta(days=offset)
+
+            # Get today's date and last Thursday's date
+            today_date = datetime.today()
+            last_thursday = get_previous_thursday(today_date)
+
+            # Get yesterday's date
+            yesterday = today_date - timedelta(days=1)
+
+            # Generate the dates from last Thursday up to yesterday
+            date_list = [last_thursday + timedelta(days=i) for i in range((yesterday - last_thursday).days + 1)]
+            print(date_list)
+
+            # Starting from row 4, get first and last name columns
+            row = 4  # Starting row for names
+            while True:
+                store_last_name = sheet.range(f'A{row}').value
+                store_first_name = sheet.range(f'B{row}').value
+
+                # Stop if both first and last names are None
+                if store_last_name is None and store_first_name is None:
+                    break
+
+                # Iterate through the grouped deposits and compare with store list names
+                for index, deposit_row in df_grouped_deposits.iterrows():
+                    first_name_deposit = deposit_row['FirstName']
+                    last_name_deposit = deposit_row['LastName']
+                    total_amount = deposit_row['Amount']
+
+                    # Check if the name from the deposit file matches the store list names
+                    if store_last_name == last_name_deposit and store_first_name == first_name_deposit:
+                        # Calculate total_added_this_week by opening store lists for each day back to last Thursday
+                        total_added_this_week = 0
+
+                        # Loop through each date back to last Thursday, stopping at yesterday
+                        for date in date_list:
+                            date_str = date.strftime('%m-%d-%y')
+                            store_file_path = os.path.join(new_store_folder_path, f'Store List_{date_str}.xlsx')
+
+                            # Check if the file exists for this date
+                            if os.path.exists(store_file_path):
+                                try:
+                                    # Open the file and access the sheet
+                                    past_wb = app.books.open(store_file_path)
+                                    past_sheet = past_wb.sheets[0]
+
+                                    # Look for the person's 'Added' value in column G (assuming 'Added' is in column G)
+                                    for r in range(4, past_sheet.range('A' + str(past_sheet.cells.last_cell.row)).end(
+                                            'up').row + 1):
+                                        past_last_name = past_sheet.range(f'A{r}').value
+                                        past_first_name = past_sheet.range(f'B{r}').value
+
+                                        # If the names match, sum up the "Added" column values
+                                        if past_last_name == last_name_deposit and past_first_name == first_name_deposit:
+                                            added_value = past_sheet.range(f'G{r}').value
+                                            if added_value is not None:
+                                                total_added_this_week += added_value
+                                            break  # Exit the loop once a match is found
+
+                                    # Close the past workbook
+                                    past_wb.close()
+
+                                except Exception as e:
+                                    # Continue to the next file if there are issues opening this one
+                                    print(f"Error accessing file {store_file_path}: {e}")
+                                    continue
+
+                        # Print the total_added_this_week along with the person's total deposits
+                        print(
+                            f"{last_name_deposit} {first_name_deposit}: {total_amount}, Total Added This Week: {total_added_this_week}")
+                        break  # You can decide if you want to continue checking or break once matched
+
+                row += 1  # Move to the next row in the store list
+
+            # Clean up and close the Excel workbook
+            wb.close()
+            app.quit()
+
+        except FileNotFoundError:
+            self.result_box.setText("Deposit file or store list file not found.")
+        except pyodbc.Error as e:
+            self.result_box.setText(f"Database error: {e}")
+        except Exception as e:
+            self.result_box.setText(f"Unexpected error: {e}")
+
+    def replenish_new_store_balances(self):
         try:
             # Get today's date in MM-DD-YY format
             today = datetime.today().strftime('%m-%d-%y')
@@ -1411,64 +1520,97 @@ class MainWindow(QMainWindow):
             # Full path to the file (already set by new_store_folder_path)
             store_file_path = os.path.join(new_store_folder_path, expected_file_name)
 
-            # Check if the file for today's date exists
+            # Clear previous result box
+            self.result_box.clear()
+
+            # Check if the file exists
             if os.path.exists(store_file_path):
-                # Open the store list workbook
-                store_wb = openpyxl.load_workbook(store_file_path)
-                store_ws = store_wb.active
+                try:
+                    # Use xlwings to open the workbook
+                    app = xw.App(visible=False)  # Run Excel in the background
+                    workbook = xw.Book(store_file_path)
+                    worksheet = workbook.sheets[0]
 
-                # Check if today is Thursday
-                today = datetime.now()
-                if today.weekday() == 2:  # 3 represents Thursday
-                    # If today is Thursday, open the auto deposits file
-                    auto_deposits_wb = openpyxl.load_workbook(auto_deposits_path)
-                    auto_deposits_ws = auto_deposits_wb.active
+                    # Recalculate the workbook to ensure all formulas are updated
+                    workbook.api.RefreshAll()  # Refresh all data connections and formulas
+                    worksheet.api.Calculate()  # Recalculate worksheet formulas
 
-                    # Iterate through the store list sheet (names start at row 4)
-                    for store_row in store_ws.iter_rows(min_row=4, max_row=store_ws.max_row, min_col=1, max_col=8):
-                        store_last_name_cell, store_first_name_cell, starting_balance_cell, store_transactions_cell, total_spent_cell, quarter_transactions_cell, added_to_store_cell, final_balance_cell = store_row
-                        store_last_name = store_last_name_cell.value
-                        store_first_name = store_first_name_cell.value
-                        starting_balance = starting_balance_cell.value or 0
-                        total_spent = total_spent_cell.value or 0
-                        quarter_transactions = quarter_transactions_cell.value or 0
-                        added_to_store = added_to_store_cell.value or 0
+                    # Establish connection to the Access database
+                    connection = pyodbc.connect(connection_string)
+                    cursor = connection.cursor()
 
-                        # Stop checking once you hit an empty last name (end of the list)
-                        if not store_last_name:
+                    # Start iterating from row 4 (assuming names always start at row 4)
+                    row = 4
+                    while True:
+                        # Read the first name (column B) and last name (column A)
+                        last_name = worksheet.range(f'A{row}').value
+                        first_name = worksheet.range(f'B{row}').value
+
+                        # Read add column and final balance column
+                        current_final_balance = worksheet.range(f'H{row}').value
+                        current_add_column = worksheet.range(f'G{row}').value
+                        # Default to 0 if the "Added" column is None
+                        if current_add_column is None:
+                            current_add_column = 0
+
+                        # If both first and last names are empty, stop the loop
+                        if not first_name and not last_name:
                             break
 
-                        # Iterate through the auto deposits sheet (names start at row 2)
-                        for auto_row in auto_deposits_ws.iter_rows(min_row=2, max_row=auto_deposits_ws.max_row,
-                                                                   min_col=1, max_col=4, values_only=True):
-                            auto_last_name, auto_first_name, _, deposit_amount = auto_row
+                        # Query the Access database for the matching LastName and FirstName
+                        query = """
+                                    SELECT [Sum of DepositAmount], [Sum of WithdrawalAmount]
+                                    FROM Balance
+                                    WHERE [LastName] = ? AND [FirstName] = ?
+                                    """
+                        cursor.execute(query, (last_name, first_name))
+                        result = cursor.fetchone()
 
-                            # Stop checking once you hit an empty last name (end of the list)
-                            if not auto_last_name:
-                                break
+                        if result:
+                            sum_of_deposits, sum_of_withdrawals = result
+                            if sum_of_deposits is None:
+                                sum_of_deposits = 0  # Handle potential None values
+                            if sum_of_withdrawals is None:
+                                sum_of_withdrawals = 0  # Handle potential None values
 
-                            # Check if the last name and first name match
-                            if store_last_name == auto_last_name and store_first_name == auto_first_name:
-                                # Calculate the current balance formula (C - E - F)
-                                current_balance = starting_balance - total_spent - quarter_transactions
+                            # Calculate the access balance
+                            access_balance = sum_of_deposits - sum_of_withdrawals
+                            access_balance = float(access_balance)
 
-                                # Check if adding the auto deposit will exceed 100
-                                if current_balance + deposit_amount <= 100:
-                                    # Add full deposit amount to column G (Added to Store Balance)
-                                    added_to_store_cell.value = (added_to_store or 0) + deposit_amount
+                            amount_to_add = 0.00
+
+                            if access_balance > 0.00:
+                                if (current_add_column + current_final_balance + access_balance) <= 100:
+                                    amount_to_add = (current_add_column + access_balance)
+                                    worksheet.range(f'G{row}').value = amount_to_add
+                                    self.result_box.append(f"Added ${amount_to_add} to {first_name} {last_name}'s account.")
                                 else:
-                                    # Only add enough to bring the balance to 100
-                                    amount_to_add = 100 - current_balance
-                                    added_to_store_cell.value = (added_to_store or 0) + amount_to_add
+                                    amount_to_add = current_add_column + (100 - current_final_balance)
+                                    if amount_to_add >= 0:
+                                        worksheet.range(f'G{row}').value = amount_to_add
+                                        self.result_box.append(f"Added ${amount_to_add} to {first_name} "
+                                                               f"{last_name}'s account.")
+                        else:
+                            print(f"No data found for {first_name} {last_name} in the database.")
+
+                        # Move to the next row
+                        row += 1
+
+                    # Close the workbook and app when done
+                    workbook.save()
+                    workbook.close()
+                    app.quit()
+                    connection.close()
+
+                except Exception as e:
+                    self.result_box.setText(f"Error loading Excel file: {e}")
+                    return
+
             else:
-                print("File does not exist")
-
-            # Save changes to the store list workbook after updating the deposits
-            store_wb.save(store_file_path)
-
+                self.result_box.setText("You need to create today's store list before you can continue.")
 
         except FileNotFoundError:
-            self.result_box.setText("Deposit file not found.")
+            self.result_box.setText("Store file not found.")
         except pyodbc.Error as e:
             self.result_box.setText(f"Database error: {e}")
         except Exception as e:
