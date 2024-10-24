@@ -115,10 +115,6 @@ class MainWindow(QMainWindow):
         self.remove_patients_comcash_button.clicked.connect(self.delete_patients_from_comcash)
         store_list_layout.addWidget(self.remove_patients_comcash_button)
 
-        self.add_deposits_to_comcash_button = QPushButton("Add Daily Deposits to Comcash")
-        self.add_deposits_to_comcash_button.clicked.connect(self.add_deposits_to_comcash)
-        store_list_layout.addWidget(self.add_deposits_to_comcash_button)
-
         self.store_list_button = QPushButton("Generate Today's Store List")
         self.store_list_button.clicked.connect(self.generate_store_list)
         store_list_layout.addWidget(self.store_list_button)
@@ -130,6 +126,10 @@ class MainWindow(QMainWindow):
         self.new_store_list_button = QPushButton("Generate New Store List")
         self.new_store_list_button.clicked.connect(self.generate_new_store_list)
         store_list_layout.addWidget(self.new_store_list_button)
+
+        self.add_deposits_to_store_button = QPushButton("Add to Deposits to New Store List")
+        self.add_deposits_to_store_button.clicked.connect(self.add_deposits_to_store_list)
+        store_list_layout.addWidget(self.add_deposits_to_store_button)
 
         store_list_group.setLayout(store_list_layout)
         button_layout.addWidget(store_list_group)
@@ -1219,16 +1219,23 @@ class MainWindow(QMainWindow):
 
             # Check if the previous store list exists
             previous_data = {}
-            if os.path.exists(previous_file_path):
-                # Load the previous store list
-                previous_wb = openpyxl.load_workbook(previous_file_path)
-                previous_ws = previous_wb.active
 
-                # Read previous sheet and store final balance data in a dictionary
-                for row in previous_ws.iter_rows(min_row=4, max_row=previous_ws.max_row, min_col=1, max_col=7,
-                                                 values_only=True):
-                    prev_last_name, prev_first_name, _, _, _, _, final_balance = row
-                    previous_data[(prev_last_name, prev_first_name)] = final_balance
+            # Open the workbook using xlwings
+            with xw.App(visible=False) as app:
+                wb = app.books.open(previous_file_path)
+                ws = wb.sheets[0]  # Adjust if it's not the first sheet
+
+                # Read the data starting from row 4
+                for row_num in range(4, ws.api.UsedRange.Rows.Count + 1):
+                    prev_last_name = ws.range(f'A{row_num}').value
+                    prev_first_name = ws.range(f'B{row_num}').value
+                    final_balance = ws.range(f'H{row_num}').value  # Assuming final balance is in column H
+
+                    # Store in the dictionary
+                    if prev_last_name and prev_first_name:
+                        previous_data[(prev_last_name, prev_first_name)] = final_balance
+
+                wb.close()
 
             if os.path.exists(store_file_path):
                 print(f"File '{store_file_name}' already exists. No new file created.")
@@ -1330,6 +1337,9 @@ class MainWindow(QMainWindow):
                         ws[f'D{row_num}'] = product_string
                         ws[f'E{row_num}'] = total_payment
 
+                    # Set the formula for Final Balance in column H
+                    ws[f'H{row_num}'] = f"=C{row_num}-E{row_num}-F{row_num}+G{row_num}"
+
                     # Move to the next row
                     row_num += 1
 
@@ -1390,67 +1400,72 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.result_box.setText(f"Unexpected error: {e}")
 
-    def add_deposits_to_comcash(self):
+    def add_deposits_to_store_list(self):
         try:
-            # Get the list of Impact Patient customers
-            api_client = APIClient()
-            active_customer_list = api_client.get_customer_list(1, 1)
+            # Get today's date in MM-DD-YY format
+            today = datetime.today().strftime('%m-%d-%y')
 
-            last_wednesday = datetime.now() - timedelta(days=5)
-            time_from = datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 0, 0, 0)
-            time_to = datetime(last_wednesday.year, last_wednesday.month, last_wednesday.day, 23, 59, 59)
+            # Set the expected file name for store list
+            expected_file_name = f'Store List_{today}.xlsx'
 
-            time_from = int(time.mktime(time_from.timetuple()))
-            time_to = int(time.mktime(time_to.timetuple()))
+            # Full path to the file (already set by new_store_folder_path)
+            store_file_path = os.path.join(new_store_folder_path, expected_file_name)
 
-            for active_customer in active_customer_list:
-                sales = api_client.get_customer_sales(active_customer.get("id"), time_from, time_to)
-                first_name = active_customer['firstName']
-                last_name = active_customer['lastName']
-                if sales:  # Ensure there is data in sales
-                    for sale in sales:  # If sales is a list, iterate over each sale
-                        total_daily_sales = sale['payment']['totalPayedAmount']
-                        self.result_box.append(f"{first_name} {last_name} - Sales: {total_daily_sales}")
-                else:
-                    self.result_box.append(f"{first_name} {last_name} - No sales found")
+            # Check if the file for today's date exists
+            if os.path.exists(store_file_path):
+                # Open the store list workbook
+                store_wb = openpyxl.load_workbook(store_file_path)
+                store_ws = store_wb.active
 
-            """
-            # Check if it's Thursday
-            today = datetime.today().weekday()
-            if today == 0:  # If it is Thursday:
-                
-                # Establish the connection to Access Database
-                connection = pyodbc.connect(connection_string)
+                # Check if today is Thursday
+                today = datetime.now()
+                if today.weekday() == 2:  # 3 represents Thursday
+                    # If today is Thursday, open the auto deposits file
+                    auto_deposits_wb = openpyxl.load_workbook(auto_deposits_path)
+                    auto_deposits_ws = auto_deposits_wb.active
 
-                # Create a cursor object using the Access connection
-                cursor = connection.cursor()
+                    # Iterate through the store list sheet (names start at row 4)
+                    for store_row in store_ws.iter_rows(min_row=4, max_row=store_ws.max_row, min_col=1, max_col=8):
+                        store_last_name_cell, store_first_name_cell, starting_balance_cell, store_transactions_cell, total_spent_cell, quarter_transactions_cell, added_to_store_cell, final_balance_cell = store_row
+                        store_last_name = store_last_name_cell.value
+                        store_first_name = store_first_name_cell.value
+                        starting_balance = starting_balance_cell.value or 0
+                        total_spent = total_spent_cell.value or 0
+                        quarter_transactions = quarter_transactions_cell.value or 0
+                        added_to_store = added_to_store_cell.value or 0
 
-                # Query all phase 1 patients
-                query = '''
-                                    SELECT FirstName, LastName, Phase, [Sum of DepositAmount], [Sum of WithdrawalAmount]
-                                    FROM Balance
-                                    WHERE Phase = '1';
-                            '''
-                cursor.execute(query)
+                        # Stop checking once you hit an empty last name (end of the list)
+                        if not store_last_name:
+                            break
 
-                rows = cursor.fetchall()
+                        # Iterate through the auto deposits sheet (names start at row 2)
+                        for auto_row in auto_deposits_ws.iter_rows(min_row=2, max_row=auto_deposits_ws.max_row,
+                                                                   min_col=1, max_col=4, values_only=True):
+                            auto_last_name, auto_first_name, _, deposit_amount = auto_row
 
-                for row in rows:
-                    first_name = row.FirstName
-                    last_name = row.LastName
-                    trust_account_bal = row[3] - row[4]
-                    current_balance = None
+                            # Stop checking once you hit an empty last name (end of the list)
+                            if not auto_last_name:
+                                break
 
+                            # Check if the last name and first name match
+                            if store_last_name == auto_last_name and store_first_name == auto_first_name:
+                                # Calculate the current balance formula (C - E - F)
+                                current_balance = starting_balance - total_spent - quarter_transactions
 
-                    for active_customer in active_customer_list:
-                        if active_customer["firstName"] == first_name and active_customer['lastName'] == last_name:
-                            current_balance = active_customer.get('storeCredit')
-                            self.result_box.append(F"{first_name} {last_name} - CT Balance : {trust_account_bal}, "
-                                                   F"Store Credit: {current_balance}")
-                                                   
+                                # Check if adding the auto deposit will exceed 100
+                                if current_balance + deposit_amount <= 100:
+                                    # Add full deposit amount to column G (Added to Store Balance)
+                                    added_to_store_cell.value = (added_to_store or 0) + deposit_amount
+                                else:
+                                    # Only add enough to bring the balance to 100
+                                    amount_to_add = 100 - current_balance
+                                    added_to_store_cell.value = (added_to_store or 0) + amount_to_add
             else:
-                self.result_box.append("It's not Thursday")
-            """
+                print("File does not exist")
+
+            # Save changes to the store list workbook after updating the deposits
+            store_wb.save(store_file_path)
+
 
         except FileNotFoundError:
             self.result_box.setText("Deposit file not found.")
